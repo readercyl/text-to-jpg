@@ -1,0 +1,60 @@
+:root {
+  /* Template: Simple Basic (Default) */
+  --card-bg: #ffffff;
+  --card-text: #1a1a1a;
+  --card-text-secondary: #999999;
+  --card-border: #eeeeee;
+  --card-shadow: rgba(0, 0, 0, 0.08);
+
+  /* Global */
+  --bg: #f5f5f5;
+  --toolbar-bg: #ffffff;
+  --panel-bg: #ffffff;
+  --accent-red: #ff2442;
+  --accent-red-hover: #e6203b;
+  --text-primary: #333333;
+  --text-secondary: #999999;
+  --border-color: #e5e5e5;
+
+  /* Typography */
+  --font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+
+[data-theme="warm"] {
+  --card-bg: #faf8f5;
+  --card-text: #3d3d3d;
+  --card-text-secondary: #888888;
+  --card-border: #f0ebe5;
+  --card-shadow: rgba(0, 0, 0, 0.06);
+}
+
+[data-theme="dark"] {
+  --card-bg: #1a1a1a;
+  --card-text: #ffffff;
+  --card-text-secondary: #aaaaaa;
+  --card-border: #333333;
+  --card-shadow: rgba(0, 0, 0, 0.3);
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: var(--font-family);
+  background: var(--bg);
+  color: var(--text-primary);
+  min-height: 100vh;
+  overflow: hidden;
+}
+
+#root {
+  width: 100%;
+  max-width: 100%;
+  margin: 0 auto;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
