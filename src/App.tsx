@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import html2canvas from 'html2canvas'
 import './App.css'
 
-type PageType = 'title' | 'content' | 'ending'
+type PageType = 'title' | 'content'
 
 interface Page {
   id: string
@@ -21,8 +21,6 @@ const TEMPLATES: { id: TemplateId; name: string }[] = [
 
 const EMOJIS = ['😀', '😂', '🥰', '😍', '🤔', '👍', '❤️', '🔥', '💯', '✨', '🌟', '💪', '👏', '🎉', '✅', '💡', '🎯', '📝', '💼', '📚', '🏆', '🚀', '💻', '🎨', '🖼️', '📷', '🎬', '🎵']
 
-const ENDING_TEXT = '职场笔记整理好，放在你手边'
-
 function generateId() {
   return Math.random().toString(36).substr(2, 9)
 }
@@ -30,22 +28,22 @@ function generateId() {
 function App() {
   const [pages, setPages] = useState<Page[]>([
     { id: generateId(), type: 'title', title: '', content: '' },
-    { id: generateId(), type: 'ending', title: '', content: '' },
+    { id: generateId(), type: 'content', title: '', content: '' },
+    { id: generateId(), type: 'content', title: '', content: '' },
   ])
   const [currentPageIndex, setCurrentPageIndex] = useState(0)
   const [template, setTemplate] = useState<TemplateId>('simple')
-  const [activeTab, setActiveTab] = useState<'template' | 'cover'>('template')
   const [showEmojiPicker, setShowEmojiPicker] = useState(false)
   const [showExportModal, setShowExportModal] = useState(false)
   const [isExporting, setIsExporting] = useState(false)
   const [exportProgress, setExportProgress] = useState(0)
   const [wordCount, setWordCount] = useState(0)
   const [lastSaved, setLastSaved] = useState(new Date())
-  const [coverTitle, setCoverTitle] = useState('')
-  const [coverSubtitle, setCoverSubtitle] = useState('')
+  const [activeFormats, setActiveFormats] = useState({ bold: false, underline: false })
 
   const contentRefs = useRef<(HTMLDivElement | null)[]>([])
-  const endingCardRef = useRef<HTMLDivElement>(null)
+  const editorAreaRef = useRef<HTMLDivElement>(null)
+  const selectionRef = useRef<Selection | null>(null)
 
   // Auto-save every 30 seconds
   useEffect(() => {
@@ -55,16 +53,121 @@ function App() {
     return () => clearInterval(interval)
   }, [])
 
-  // Calculate word count
+  // Calculate word count - only count text content (exclude HTML tags)
   useEffect(() => {
-    const text = pages.reduce((acc, page) => acc + page.title + page.content, '')
-    const count = text.replace(/\s/g, '').length
-    setWordCount(count)
+    let totalText = ''
+    pages.forEach(page => {
+      totalText += page.title + ' ' + page.content + ' '
+    })
+    // Strip HTML tags and count characters
+    const text = totalText.replace(/<[^>]*>/g, '').replace(/\s/g, '')
+    setWordCount(text.length)
   }, [pages])
 
+  // Listen for selection changes to update toolbar state
+  useEffect(() => {
+    const handleSelectionChange = () => {
+      const selection = window.getSelection()
+      if (selection && selection.rangeCount > 0) {
+        selectionRef.current = selection
+        try {
+          setActiveFormats({
+            bold: document.queryCommandState('bold'),
+            underline: document.queryCommandState('underline'),
+          })
+        } catch {
+          setActiveFormats({ bold: false, underline: false })
+        }
+      }
+    }
+
+    document.addEventListener('selectionchange', handleSelectionChange)
+    return () => document.removeEventListener('selectionchange', handleSelectionChange)
+  }, [])
+
+  // Toolbar formatting commands
+  const formatBold = () => {
+    document.execCommand('bold', false)
+    updateActiveFormats()
+  }
+
+  const formatUnderline = () => {
+    document.execCommand('underline', false)
+    updateActiveFormats()
+  }
+
+  const formatH1 = () => {
+    const selection = window.getSelection()
+    if (!selection || selection.rangeCount === 0) return
+
+    const range = selection.getRangeAt(0)
+    const container = range.commonAncestorContainer
+
+    // Find the content editable element
+    const editableEl = container.nodeType === 1
+      ? container as HTMLElement
+      : container.parentElement as HTMLElement
+
+    if (editableEl && editableEl.classList.contains('page-content-editable')) {
+      document.execCommand('formatBlock', false, '<h1>')
+    }
+  }
+
+  const formatH2 = () => {
+    const selection = window.getSelection()
+    if (!selection || selection.rangeCount === 0) return
+
+    const range = selection.getRangeAt(0)
+    const container = range.commonAncestorContainer
+
+    const editableEl = container.nodeType === 1
+      ? container as HTMLElement
+      : container.parentElement as HTMLElement
+
+    if (editableEl && editableEl.classList.contains('page-content-editable')) {
+      document.execCommand('formatBlock', false, '<h2>')
+    }
+  }
+
+  const formatOrderedList = () => {
+    document.execCommand('insertOrderedList', false)
+  }
+
+  const formatUnorderedList = () => {
+    document.execCommand('insertUnorderedList', false)
+  }
+
+  const formatBlockquote = () => {
+    document.execCommand('formatBlock', false, '<blockquote>')
+  }
+
+  const changeFont = (fontName: string) => {
+    document.execCommand('fontName', false, fontName)
+  }
+
+  const updateActiveFormats = () => {
+    setActiveFormats({
+      bold: document.queryCommandState('bold'),
+      underline: document.queryCommandState('underline'),
+    })
+  }
+
+  // Insert emoji at cursor
+  const insertEmoji = (emoji: string) => {
+    document.execCommand('insertText', false, emoji)
+    setShowEmojiPicker(false)
+  }
+
   // Handle content change with auto-pagination
-  const handleContentChange = useCallback((value: string, pageIndex: number) => {
-    setPages(prev => prev.map((p, i) => i === pageIndex ? { ...p, content: value } : p))
+  const handleContentChange = useCallback((pageIndex: number) => {
+    const contentEl = contentRefs.current[pageIndex]
+    if (!contentEl) return
+
+    const text = contentEl.innerHTML
+    setPages(prev => prev.map((p, i) => i === pageIndex ? { ...p, content: text } : p))
+
+    // Check if content overflows
+    checkAndSplitContent(pageIndex)
   }, [])
 
   // Check if content overflows and create new page
@@ -76,96 +179,200 @@ function App() {
     const clientHeight = contentEl.clientHeight
 
     // If content overflows, we need to split it
-    if (scrollHeight > clientHeight + 10) {
-      const text = contentEl.innerText
-      const lines = text.split('\n')
-      let accumulatedHeight = 0
+    if (scrollHeight > clientHeight + 5) {
+      // Get all content
+      const fullHTML = contentEl.innerHTML
+      const fullText = contentEl.innerText
+
+      // Calculate approximate split point
+      const lineHeight = 27
+      const charsPerLine = Math.floor(clientHeight / lineHeight) * 30
+      const lines = fullText.split('\n')
+      let accumulatedChars = 0
       let splitIndex = 0
 
-      // Find where to split
-      const lineHeight = 27.75 // approx line height (15px * 1.85)
       for (let i = 0; i < lines.length; i++) {
-        const lineCount = Math.ceil(lines[i].length / 25) // approx chars per line
-        accumulatedHeight += lineCount * lineHeight
-        if (accumulatedHeight > clientHeight - 50) {
+        accumulatedChars += lines[i].length + 1
+        if (accumulatedChars > charsPerLine * 0.8) {
           splitIndex = i
           break
         }
       }
 
-      if (splitIndex > 0 && splitIndex < lines.length) {
-        const currentContent = lines.slice(0, splitIndex).join('\n')
-        const nextContent = lines.slice(splitIndex).join('\n')
+      if (splitIndex >= lines.length - 1) splitIndex = lines.length - 2
+      if (splitIndex < 0) splitIndex = 0
 
-        // Update current page and create new one
-        setPages(prev => {
-          const newPages = [...prev]
-          const endingPage = newPages.pop()! // Remove ending page temporarily
+      // Split the HTML content
+      const currentLines = lines.slice(0, splitIndex + 1)
+      const nextLines = lines.slice(splitIndex + 1)
 
-          newPages[pageIndex] = { ...newPages[pageIndex], content: currentContent }
-          newPages.push({ id: generateId(), type: 'content', title: '', content: nextContent })
-          newPages.push(endingPage)
+      // Create simple text version
+      const currentText = currentLines.join('\n')
 
-          return newPages
-        })
+      // Find where in the HTML the split should occur
+      let currentHTML = ''
+      let nextHTML = ''
+      let charCount = 0
+      let inTag = false
+      let i = 0
+
+      while (i < fullHTML.length && charCount <= currentText.length) {
+        const char = fullHTML[i]
+        if (char === '<') inTag = true
+        if (!inTag) charCount++
+        currentHTML += char
+        if (char === '>') inTag = false
+        i++
       }
+
+      // Find a good breaking point (end of a tag or paragraph)
+      while (i < fullHTML.length) {
+        const char = fullHTML[i]
+        if (char === '<' && fullHTML.substring(i, i + 4) === '<div') {
+          break
+        }
+        nextHTML += char
+        i++
+      }
+
+      // Clean up the split HTML
+      if (!nextHTML.trim()) {
+        nextHTML = nextLines.join('<br>')
+      }
+
+      // Store nextHTML for use in setTimeout
+      const finalNextHTML = nextHTML
+
+      // Update pages
+      setPages(prev => {
+        const newPages = [...prev]
+
+        // Update current page content
+        newPages[pageIndex] = { ...newPages[pageIndex], content: currentHTML }
+
+        // Check if next page exists
+        if (pageIndex + 1 < newPages.length) {
+          // Append to existing next page
+          const nextContent = newPages[pageIndex + 1].content || ''
+          newPages[pageIndex + 1] = {
+            ...newPages[pageIndex + 1],
+            content: nextContent + finalNextHTML
+          }
+        } else {
+          // Create new page
+          newPages.push({
+            id: generateId(),
+            type: 'content',
+            title: '',
+            content: finalNextHTML
+          })
+        }
+
+        return newPages
+      })
+
+      // Update the DOM after state update
+      setTimeout(() => {
+        // Update current editor
+        if (contentRefs.current[pageIndex]) {
+          contentRefs.current[pageIndex]!.innerHTML = currentHTML
+        }
+
+        // Update next editor
+        if (contentRefs.current[pageIndex + 1]) {
+          contentRefs.current[pageIndex + 1]!.innerHTML = pages[pageIndex + 1]?.content + finalNextHTML || finalNextHTML
+          // Scroll to make new card visible
+          contentRefs.current[pageIndex + 1]!.scrollIntoView({ behavior: 'smooth', block: 'center' })
+        } else if (editorAreaRef.current) {
+          // New card was created, scroll to it
+          const cards = editorAreaRef.current.querySelectorAll('.page-card')
+          cards[cards.length - 1]?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+        }
+      }, 50)
     }
-  }, [])
+  }, [pages])
 
-  // Handle Enter key for manual page break
+  // Handle backspace to merge pages
   const handleKeyDown = useCallback((e: React.KeyboardEvent, pageIndex: number) => {
-    if (e.key === 'Enter') {
-      const contentEl = contentRefs.current[pageIndex]
-      if (!contentEl) return
+    const contentEl = contentRefs.current[pageIndex]
+    if (!contentEl) return
 
-      // Check for double Enter
-      const selection = window.getSelection()
-      if (selection && selection.rangeCount > 0) {
-        const text = contentEl.innerText
-        const cursorPos = text.length
+    // Check if content is empty and we should merge with previous page
+    if (e.key === 'Backspace' && contentEl.innerText.trim() === '') {
+      if (pageIndex > 0) {
+        e.preventDefault()
 
-        // Check if last character before cursor is also Enter
-        if (text[cursorPos - 1] === '\n' || (cursorPos === text.length && text.endsWith('\n\n'))) {
-          e.preventDefault()
+        const prevContent = contentRefs.current[pageIndex - 1]
+        const currentContent = pages[pageIndex].content
 
-          // Insert page break marker
-          document.execCommand('insertHTML', false, '<div class="page-break-hint" contenteditable="false">⬇ 分页</div>')
+        if (prevContent) {
+          // Merge content into previous page
+          const mergedContent = prevContent.innerHTML + currentContent
+          prevContent.innerHTML = mergedContent
 
-          // Create new page after a brief delay
+          // Update state
+          setPages(prev => {
+            const newPages = [...prev]
+            newPages[pageIndex - 1] = {
+              ...newPages[pageIndex - 1],
+              content: mergedContent
+            }
+            newPages.splice(pageIndex, 1)
+            return newPages
+          })
+
+          // Focus previous page
           setTimeout(() => {
-            setPages(prev => {
-              const newPages = [...prev]
-              const endingPage = newPages.pop()!
-
-              // Insert new content page after current one
-              newPages.push({ id: generateId(), type: 'content', title: '', content: '' })
-              newPages.push(endingPage)
-
-              return newPages
-            })
-
-            // Focus new page
-            setTimeout(() => {
-              const newIndex = pageIndex + 1
-              setCurrentPageIndex(newIndex)
-              contentRefs.current[newIndex]?.focus()
-            }, 50)
+            prevContent.focus()
+            // Move cursor to end
+            const range = document.createRange()
+            range.selectNodeContents(prevContent)
+            range.collapse(false)
+            const selection = window.getSelection()
+            selection?.removeAllRanges()
+            selection?.addRange(range)
           }, 50)
         }
       }
     }
-  }, [])
 
-  // Insert emoji at cursor
-  const insertEmoji = (emoji: string) => {
-    const page = pages[currentPageIndex]
-    if (page.type === 'title' || page.type === 'content') {
-      const contentEl = contentRefs.current[currentPageIndex]
-      if (contentEl) {
-        document.execCommand('insertText', false, emoji)
+    // Handle Enter for list items
+    if (e.key === 'Enter' && !e.shiftKey) {
+      // Let the default behavior handle list creation
+    }
+  }, [pages])
+
+  // Insert image
+  const insertImage = () => {
+    const input = document.createElement('input')
+    input.type = 'file'
+    input.accept = 'image/*'
+    input.onchange = (e) => {
+      const file = (e.target as HTMLInputElement).files?.[0]
+      if (file) {
+        const reader = new FileReader()
+        reader.onload = (evt) => {
+          const src = evt.target?.result as string
+          document.execCommand('insertImage', false, src)
+        }
+        reader.readAsDataURL(file)
       }
     }
-    setShowEmojiPicker(false)
+    input.click()
+  }
+
+  // Go to page
+  const goToPage = (index: number) => {
+    if (index >= 0 && index < pages.length) {
+      setCurrentPageIndex(index)
+      setTimeout(() => {
+        contentRefs.current[index]?.focus()
+      }, 50)
+    }
+  }
+
+  const formatTime = (date: Date) => {
+    return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
   }
 
   // Export to JPG
@@ -174,18 +381,13 @@ function App() {
     setIsExporting(true)
     setExportProgress(0)
 
-    // Wait for DOM update
     await new Promise(resolve => setTimeout(resolve, 100))
 
     const pageCards = document.querySelectorAll('.page-card')
-    const totalPages = pages.filter(p => p.type !== 'ending').length
+    const totalPages = pages.length
 
     try {
-      let exportedCount = 0
       for (let i = 0; i < pageCards.length; i++) {
-        const page = pages[i]
-        if (page.type === 'ending') continue
-
         const card = pageCards[i] as HTMLElement
         const canvas = await html2canvas(card, {
           scale: 2,
@@ -195,12 +397,11 @@ function App() {
         })
 
         const link = document.createElement('a')
-        link.download = `笔记_第${exportedCount + 1}页.jpg`
+        link.download = `第${i + 1}页.jpg`
         link.href = canvas.toDataURL('image/jpeg', 0.95)
         link.click()
 
-        exportedCount++
-        setExportProgress(Math.round((exportedCount / totalPages) * 100))
+        setExportProgress(Math.round(((i + 1) / totalPages) * 100))
         await new Promise(resolve => setTimeout(resolve, 300))
       }
     } catch (error) {
@@ -210,43 +411,50 @@ function App() {
     setIsExporting(false)
   }
 
-  const formatTime = (date: Date) => {
-    return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
-  }
-
-  const goToPage = (index: number) => {
-    if (index >= 0 && index < pages.length) {
-      setCurrentPageIndex(index)
-    }
-  }
-
-  // Get content pages only for pagination display
-  const contentPages = pages.filter(p => p.type !== 'ending')
-  const currentContentPageIndex = currentPageIndex === pages.length - 1 ? contentPages.length - 1 : currentPageIndex
-
   const themeClass = template === 'warm' ? 'warm' : template === 'dark' ? 'dark' : ''
 
   return (
     <div className="app" data-theme={themeClass}>
       {/* Toolbar */}
       <div className="toolbar">
-        <button className="back-btn">
-          <span>←</span>
-          <span>返回</span>
-        </button>
-        <div className="toolbar-divider" />
         <button className="toolbar-btn" title="撤销">↩</button>
         <button className="toolbar-btn" title="重做">↪</button>
         <div className="toolbar-divider" />
-        <button className="toolbar-btn toolbar-btn-text" title="H1标题"><strong>H1</strong></button>
-        <button className="toolbar-btn toolbar-btn-text" title="H2标题"><strong>H2</strong></button>
+        <button className="toolbar-btn toolbar-btn-text" title="H1标题" onClick={formatH1}><strong>H1</strong></button>
+        <button className="toolbar-btn toolbar-btn-text" title="H2标题" onClick={formatH2}><strong>H2</strong></button>
         <div className="toolbar-divider" />
-        <button className="toolbar-btn toolbar-btn-text" title="有序列表">1.</button>
-        <button className="toolbar-btn toolbar-btn-text" title="无序列表">•</button>
-        <button className="toolbar-btn" title="引用">❝</button>
-        <button className="toolbar-btn toolbar-btn-text" title="下划线"><u>U</u></button>
+        <button
+          className={`toolbar-btn toolbar-btn-text ${activeFormats.bold ? 'active' : ''}`}
+          title="加粗"
+          onClick={formatBold}
+        >
+          <strong>B</strong>
+        </button>
+        <button
+          className={`toolbar-btn toolbar-btn-text ${activeFormats.underline ? 'active' : ''}`}
+          title="下划线"
+          onClick={formatUnderline}
+        >
+          <u>U</u>
+        </button>
         <div className="toolbar-divider" />
-        <button className="toolbar-btn" title="插入图片">🖼</button>
+        <button className="toolbar-btn toolbar-btn-text" title="有序列表" onClick={formatOrderedList}>1.</button>
+        <button className="toolbar-btn toolbar-btn-text" title="无序列表" onClick={formatUnorderedList}>•</button>
+        <button className="toolbar-btn" title="引用" onClick={formatBlockquote}>❝</button>
+        <div className="toolbar-divider" />
+        <select
+          className="font-select"
+          onChange={(e) => changeFont(e.target.value)}
+          defaultValue=""
+        >
+          <option value="" disabled>字体</option>
+          <option value="默认">默认</option>
+          <option value="宋体">宋体</option>
+          <option value="楷体">楷体</option>
+          <option value="黑体">黑体</option>
+        </select>
+        <div className="toolbar-divider" />
+        <button className="toolbar-btn" title="插入图片" onClick={insertImage}>🖼</button>
         <button
           className="toolbar-btn"
           title="插入表情"
@@ -275,12 +483,12 @@ function App() {
       {/* Main Layout */}
       <div className="main-layout">
         {/* Editor Area */}
-        <div className="editor-area">
+        <div className="editor-area" ref={editorAreaRef}>
           <div className="pages-container">
             {pages.map((page, index) => (
               <div
                 key={page.id}
-                className={`page-card ${page.type === 'title' ? 'title-page' : page.type === 'ending' ? 'ending-page' : 'content-page'} ${index === currentPageIndex ? 'editing' : ''}`}
+                className={`page-card ${page.type === 'title' ? 'title-page' : 'content-page'} ${index === currentPageIndex ? 'editing' : ''}`}
                 onClick={() => goToPage(index)}
                 data-page-index={index}
               >
@@ -293,181 +501,88 @@ function App() {
                       onChange={e => {
                         setPages(prev => prev.map((p, i) => i === index ? { ...p, title: e.target.value } : p))
                       }}
-                      onClick={e => { e.stopPropagation(); goToPage(index) }}
+                      onClick={e => e.stopPropagation()}
                     />
                     <div
                       ref={el => { contentRefs.current[index] = el }}
                       className="page-content-editable"
                       contentEditable
                       suppressContentEditableWarning
-                      onInput={e => {
-                        const target = e.target as HTMLDivElement
-                        handleContentChange(target.innerText, index)
-                        checkAndSplitContent(index)
-                      }}
+                      onInput={() => handleContentChange(index)}
                       onKeyDown={e => handleKeyDown(e, index)}
                       onClick={e => { e.stopPropagation(); goToPage(index) }}
+                      data-placeholder="输入正文..."
                     />
                   </>
                 )}
 
                 {page.type === 'content' && (
-                  <>
-                    <input
-                      className="page-title-input"
-                      placeholder="页面标题"
-                      value={page.title}
-                      onChange={e => {
-                        setPages(prev => prev.map((p, i) => i === index ? { ...p, title: e.target.value } : p))
-                      }}
-                      onClick={e => { e.stopPropagation(); goToPage(index) }}
-                    />
-                    <div
-                      ref={el => { contentRefs.current[index] = el }}
-                      className="page-content-editable"
-                      contentEditable
-                      suppressContentEditableWarning
-                      onInput={e => {
-                        const target = e.target as HTMLDivElement
-                        handleContentChange(target.innerText, index)
-                        checkAndSplitContent(index)
-                      }}
-                      onKeyDown={e => handleKeyDown(e, index)}
-                      onClick={e => { e.stopPropagation(); goToPage(index) }}
-                    />
-                  </>
+                  <div
+                    ref={el => { contentRefs.current[index] = el }}
+                    className="page-content-editable content-only"
+                    contentEditable
+                    suppressContentEditableWarning
+                    onInput={() => handleContentChange(index)}
+                    onKeyDown={e => handleKeyDown(e, index)}
+                    onClick={e => { e.stopPropagation(); goToPage(index) }}
+                    data-placeholder="输入正文..."
+                  />
                 )}
 
-                {page.type === 'ending' && (
-                  <div className="ending-card" ref={endingCardRef}>
-                    <div className="ending-card-inner">
-                      <div className="ending-decoration-top">
-                        <div className="ending-line" />
-                        <div className="ending-icon-small">✦</div>
-                        <div className="ending-line" />
-                      </div>
-                      <div className="ending-title">E N D</div>
-                      <div className="ending-divider" />
-                      <div className="ending-text">{ENDING_TEXT}</div>
-                      <div className="ending-decoration">
-                        <span className="ending-dot" />
-                        <span className="ending-dot" />
-                        <span className="ending-dot" />
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {page.type !== 'ending' && (
-                  <div className="page-number-indicator">
-                    {currentPageIndex === index ? (
-                      <span className="current-page-label">当前编辑</span>
-                    ) : (
-                      <span>{index + 1}</span>
-                    )}
-                  </div>
-                )}
+                <div className="page-number-indicator">
+                  {index === currentPageIndex ? (
+                    <span className="current-page-label">当前编辑</span>
+                  ) : (
+                    <span>{index + 1}</span>
+                  )}
+                </div>
               </div>
             ))}
-          </div>
-
-          {/* Page Navigation - Circle Indicators */}
-          <div className="page-nav-circles">
-            {contentPages.map((_, index) => (
-              <button
-                key={pages[index].id}
-                className={`page-circle ${index === currentContentPageIndex ? 'active' : ''}`}
-                onClick={() => goToPage(index)}
-                title={`第 ${index + 1} 页`}
-              >
-                {index + 1}
-              </button>
-            ))}
-            <span className="page-nav-total">共 {contentPages.length} 页</span>
           </div>
         </div>
 
         {/* Side Panel */}
         <div className="side-panel">
-          <div className="panel-tabs">
-            <button
-              className={`panel-tab ${activeTab === 'template' ? 'active' : ''}`}
-              onClick={() => setActiveTab('template')}
-            >
-              选择模板
-            </button>
-            <button
-              className={`panel-tab ${activeTab === 'cover' ? 'active' : ''}`}
-              onClick={() => setActiveTab('cover')}
-            >
-              封面设置
-            </button>
+          <div className="panel-header">
+            <span className="panel-title">选择模板</span>
           </div>
 
           <div className="panel-content">
-            {activeTab === 'template' && (
-              <>
-                <div className="template-section">
-                  <div className="template-section-title">配色方案</div>
-                  <div className="template-grid">
-                    {TEMPLATES.map(tpl => (
-                      <div key={tpl.id} className="template-item">
-                        <div
-                          className={`template-thumb ${tpl.id} ${template === tpl.id ? 'selected' : ''}`}
-                          onClick={() => setTemplate(tpl.id)}
-                        >
-                          <div className="template-thumb-content">
-                            <div className="template-thumb-line" />
-                            <div className="template-thumb-line" />
-                            <div className="template-thumb-line" />
-                            <div className="template-thumb-line" />
-                          </div>
-                        </div>
-                        <span className="template-label">{tpl.name}</span>
+            <div className="template-section">
+              <div className="template-section-title">配色方案</div>
+              <div className="template-grid">
+                {TEMPLATES.map(tpl => (
+                  <div key={tpl.id} className="template-item">
+                    <div
+                      className={`template-thumb ${tpl.id} ${template === tpl.id ? 'selected' : ''}`}
+                      onClick={() => setTemplate(tpl.id)}
+                    >
+                      <div className="template-thumb-content">
+                        <div className="template-thumb-line" />
+                        <div className="template-thumb-line" />
+                        <div className="template-thumb-line" />
+                        <div className="template-thumb-line" />
                       </div>
-                    ))}
+                    </div>
+                    <span className="template-label">{tpl.name}</span>
                   </div>
-                </div>
+                ))}
+              </div>
+            </div>
 
-                <div className="template-section">
-                  <div className="template-section-title">页面预览</div>
-                  <div className="template-preview-info">
-                    <span>当前共 {contentPages.length} 页内容</span>
-                  </div>
-                </div>
+            <div className="template-section">
+              <div className="template-section-title">页面预览</div>
+              <div className="template-preview-info">
+                <span>当前共 {pages.length} 页内容</span>
+              </div>
+            </div>
 
-                <div className="template-section">
-                  <div className="template-section-title">分页提示</div>
-                  <div className="template-hint">
-                    按 <kbd>Enter</kbd> 两次可插入分页
-                  </div>
-                </div>
-              </>
-            )}
-
-            {activeTab === 'cover' && (
-              <>
-                <div className="cover-preview">
-                  <div className="cover-preview-title">
-                    {coverTitle || '点击下方输入标题'}
-                  </div>
-                </div>
-                <label className="cover-label">封面标题</label>
-                <input
-                  className="cover-input"
-                  placeholder="输入封面标题"
-                  value={coverTitle}
-                  onChange={e => setCoverTitle(e.target.value)}
-                />
-                <label className="cover-label">副标题</label>
-                <input
-                  className="cover-input"
-                  placeholder="输入副标题（可选）"
-                  value={coverSubtitle}
-                  onChange={e => setCoverSubtitle(e.target.value)}
-                />
-              </>
-            )}
+            <div className="template-section">
+              <div className="template-section-title">分页提示</div>
+              <div className="template-hint">
+                内容超出卡片高度时自动分页
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -493,7 +608,7 @@ function App() {
             <button className="modal-close" onClick={() => setShowExportModal(false)}>×</button>
             <div className="modal-title">导出笔记</div>
             <div className="modal-info">
-              将导出 <strong>{contentPages.length}</strong> 页为 JPG 图片
+              将导出 <strong>{pages.length}</strong> 页为 JPG 图片
             </div>
             <div className="modal-buttons">
               <button
@@ -511,7 +626,7 @@ function App() {
       {isExporting && (
         <div className="loading-overlay">
           <div className="loading-spinner" />
-          <div className="loading-text">正在导出第 {Math.round(exportProgress / 100 * contentPages.length)} / {contentPages.length} 页...</div>
+          <div className="loading-text">正在导出...</div>
           <div className="loading-progress">
             <div className="loading-progress-bar" style={{ width: `${exportProgress}%` }} />
           </div>
